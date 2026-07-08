@@ -1,6 +1,6 @@
 # ホンダ スーパーカブ用 Arduino Nano デジタルCDI
 
-ホンダ スーパーカブ90（HA02等）の横型エンジン向けに最適化された、Arduino Nano（ATmega328P）ベースのプログラマブル・デジタル進角/遅角 AC-CDI ファームウェアです。
+ホンダ スーパーカブ90（HA02等）の横型エンジン向けに最適化された、Arduino Nano（ATmega328P）ベースのプログラマブル・デジタル進角/遅角CDIのファームウェアです。
 
 本プロジェクトは、「[ほいほい堂blog](https://www.hoihoido.com/blog/howtomakeacdiforcub/)」の設計をベースとして、**個人的的な再構築**を行っています。
 
