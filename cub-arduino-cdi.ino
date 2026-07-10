@@ -441,7 +441,7 @@ void keydown()
 void setup()
 {
   Serial.begin(115200);
-  Serial.print("CDI-AC6 Ver");
+  Serial.print("Arduino Nano Digital CDI Ver");
   Serial.print(VERSION / 10);
   Serial.print(".");
   Serial.println(VERSION % 10);
