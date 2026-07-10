@@ -1,61 +1,51 @@
 #include <EEPROM.h>
 
-#define OUTPIN 5   // PD5
-#define INPIN 2    // PD2
-#define ENPIN 3    // PD3
-#define SW_ENT A4  // ENTER
-#define SW_UP A3   // ↑
-#define SW_DOWN A2 // ↓
-#define SW_CAN A1  // CANCEL
-#define AVENUM 2
-#define KONDLY 10    // キーチャタリング待ち時間(mS)
-#define KINTDLY 150  // 次のキー入力許可までの時間(mS)
+#define OUTPIN 5 // PD5
+#define INPIN 2  // PD2
+#define ENPIN 3  // PD3
 #define RPMINTVL 500 // LCDの回転数更新間隔(mS)
-#define MAXDEG 50    // 最大進角
-#define MINDEG 10    // 最小進角
-#define TIMINTVL 25  // Timing割込み最小間隔(4uS単位：25だと100uS)
+#define MAXDEG 50  // 最大進角
+#define MINDEG 10  // 最小進角
+#define TIMINTVL 25 // Timing割込み最小間隔(4uS単位：25だと100uS)
 
 // α-βフィルタの追従性チューニング用定数
 // シフト量が小さいほど追従性が高く(過敏)、大きいほど平滑性が高い(鈍感)
-// (1=1/2, 2=1/4, 3=1/8, 4=1/16)
-#define ALPHA_SHIFT 1 // αゲインのビットシフト量
-#define BETA_SHIFT 2  // βゲインのビットシフト量
+#define ALPHA_SHIFT 1  // αゲインのビットシフト量 (1=1/2, 2=1/4)
+#define BETA_SHIFT  2  // βゲインのビットシフト量 (3=1/8, 4=1/16)
 
 // マップサイズ5要素 (1000, 3000, 5000, 7000, 9000rpm)
-#define MAPSIZE 5
-#define MAPSELECT 0
-#define MAPAOFFSET 8
-#define MAPBOFFSET 16
+#define MAPSIZE 5   
+#define MAPSELECT  0  
+#define MAPAOFFSET 8  
+#define MAPBOFFSET 16 
 #define LCDRPM 0
 #define LCDINI 1
 #define LCDMOD 2
-#define VERSION 70 // バージョン番号 (70=Ver7.0 フィルタ定数化)
+#define VERSION 70  // バージョン番号 (70=Ver7.0 フィルタ定数化・リファクタリング)
 
 volatile bool pon = false;
-volatile bool ovf = false;
-volatile bool Bon = false;
-volatile bool Aen = false;
-volatile bool Ben = false;
-volatile bool Kon = false;
-volatile unsigned widthA = 0;
-volatile unsigned widthB = 0;
-volatile unsigned int intervaltime = 0;
+volatile bool ovf = false; 
+volatile bool Bon=false;   
+volatile bool Aen=false;   
+volatile bool Ben=false;   
+volatile unsigned widthA=0;
+volatile unsigned widthB=0;
+volatile unsigned int intervaltime=0;
 
 // デフォルト配列 (5要素)
-uint8_t tmap[] = {0, 0, 0, 0, 0};
-uint8_t dmapA[] = {17, 28, 30, 32, 34};
-uint8_t dmapB[] = {17, 27, 27, 27, 27};
+uint8_t tmap[]={ 0, 0, 0, 0, 0}; 
+uint8_t dmapA[]={17,22,30,32,32}; 
+uint8_t dmapB[]={17,27,27,27,27}; 
 
-uint16_t rpm = 0;
-unsigned int averagetime = 0;
-int avecount = 0;
-int mapselect = 0;
-int mapselcd = 0;
-bool edit = false;
-int select = 0;
-bool modify = false;
-uint8_t *mappt = dmapA;
-int offset = MAPAOFFSET;
+uint16_t rpm=0;
+unsigned int averagetime=0;
+int mapselect=0;  
+int mapselcd=0;   
+bool edit=false;
+int  select=0;
+bool modify=false;
+uint8_t *mappt=dmapA;
+int offset=MAPAOFFSET;
 
 // 高解像度 α-βフィルタ用の状態変数
 int32_t ab_interval_fp = 15000 << 8;
@@ -64,143 +54,127 @@ int32_t ab_velocity_fp = 0;
 // 4ストローク脈動キャンセル用
 int32_t history[2] = {15000, 15000};
 
-ISR(INT0_vect, ISR_NAKED)
+ISR(INT0_vect, ISR_NAKED) 
 {
-  asm volatile(
-      "cli \n"
-      "push r16 \n"
-      "push r17 \n"
-      "push r18 \n"
-      "in  r17, (__SREG__) \n"
+  asm volatile  (
+    "cli \n"              
+    "push r16 \n"         
+    "push r17 \n"
+    "push r18 \n"
+    "in  r17, (__SREG__) \n" 
 
-      "cbi  0x1d, 0 \n"
+    "cbi  0x1d, 0 \n"     
+    
+    "ldi  r16, 0x00 \n"   
+    "sts  0x0081, r16 \n"
 
-      "ldi  r16, 0x00 \n"
-      "sts  0x0081, r16 \n"
+    "lds r16, 0x0084 \n"
+    "sts (intervaltime), r16 \n"
+    "lds r16, 0x0085 \n"
+    "sts (intervaltime+1), r16 \n"
 
-      "lds r16, 0x0084 \n"
-      "sts (intervaltime), r16 \n"
-      "lds r16, 0x0085 \n"
-      "sts (intervaltime+1), r16 \n"
+    "lds  r16, (Aen) \n"
+    "lds  r18, (Bon) \n"
+    "or   r16, r18 \n"
+    "ldi  r18, 0x01 \n"     
+    "tst  r16 \n"
+    "brbs 1,ASKIP \n"
+    "lds  r16, (widthA+1)\n"
+    "sts  0x0089, r16 \n"   
+    "lds  r16, (widthA)\n"
+    "sts  0x0088, r16 \n"   
+    "sbr  r18, 0x02 \n"     
+    "ASKIP:\n"
 
-      "lds  r16, (Aen) \n"
-      "lds  r18, (Bon) \n"
-      "or   r16, r18 \n"
-      "ldi  r18, 0x01 \n"
-      "tst  r16 \n"
-      "brbs 1,ASKIP \n"
-      "lds  r16, (widthA+1)\n"
-      "sts  0x0089, r16 \n"
-      "lds  r16, (widthA)\n"
-      "sts  0x0088, r16 \n"
-      "sbr  r18, 0x02 \n"
-      "ASKIP:\n"
+    "lds  r16, (Ben) \n"
+    "tst  r16 \n"
+    "brbs 1,BSKIP \n"
+    "lds  r16, (widthB+1)\n"
+    "sts  0x008b, r16 \n"   
+    "lds  r16, (widthB)\n"
+    "sts  0x008a, r16 \n"   
+    "sbr  r18, 0x04 \n"     
+    "ldi  r16, 0x01 \n"     
+    "sts  (Bon), r16 \n"
+    "BSKIP:\n"
+    
+    "sts  0x006f, r18 \n"   
+    "ldi  r16,0x27 \n"      
+    "out  0x16, r16 \n"     
+    
+    "ldi   r16, 0x01 \n"  
+    "sts  (pon), r16 \n"
 
-      "lds  r16, (Ben) \n"
-      "tst  r16 \n"
-      "brbs 1,BSKIP \n"
-      "lds  r16, (widthB+1)\n"
-      "sts  0x008b, r16 \n"
-      "lds  r16, (widthB)\n"
-      "sts  0x008a, r16 \n"
-      "sbr  r18, 0x04 \n"
-      "ldi  r16, 0x01 \n"
-      "sts  (Bon), r16 \n"
-      "BSKIP:\n"
+    "ldi   r16, 0x00 \n"  
+    "sts  0x0085, r16 \n" 
+    "sts  0x0084, r16 \n" 
 
-      "sts  0x006f, r18 \n"
-      "ldi  r16,0x27 \n"
-      "out  0x16, r16 \n"
+    "ldi   r16, 0x03 \n"  
+    "sts  0x0081, r16 \n"  
 
-      "ldi   r16, 0x01 \n"
-      "sts  (pon), r16 \n"
-
-      "ldi   r16, 0x00 \n"
-      "sts  0x0085, r16 \n"
-      "sts  0x0084, r16 \n"
-
-      "ldi   r16, 0x03 \n"
-      "sts  0x0081, r16 \n"
-
-      "out (__SREG__), r17  \n"
-      "pop r18 \n"
-      "pop r17 \n"
-      "pop r16 \n"
-      "reti" ::: "r16", "r17", "r18");
+    "out (__SREG__), r17  \n" 
+    "pop r18 \n"
+    "pop r17 \n"
+    "pop r16 \n"          
+    "reti"                
+    :::"r16","r17","r18"
+    );
 }
 
-ISR(TIMER1_COMPA_vect, ISR_NAKED)
+ISR(TIMER1_COMPA_vect, ISR_NAKED) 
 {
-  asm volatile(
-      "cli \n"
-      "sbi 0x0b, 5 \n"
-      "push r16 \n"
-      "push r17 \n"
-      "in  r17, (__SREG__) \n"
-      "ldi r16,32 \n"
-      "LP1: \n"
-      "dec r16 \n"
-      "brne LP1\n"
-      "out (__SREG__), r17  \n"
-      "pop r17 \n"
-      "pop r16 \n"
-      "cbi 0x0b, 5 \n"
-      "reti" ::: "r16", "r17");
+  asm volatile  (
+    "cli \n" "sbi 0x0b, 5 \n" 
+    "push r16 \n" "push r17 \n" 
+    "in  r17, (__SREG__) \n" 
+    "ldi r16,32 \n" "LP1: \n" 
+    "dec r16 \n" "brne LP1\n" 
+    "out (__SREG__), r17  \n" 
+    "pop r17 \n" "pop r16 \n" 
+    "cbi 0x0b, 5 \n" 
+    "reti" :::"r16","r17"
+  );
 }
 
-ISR(TIMER1_COMPB_vect, ISR_NAKED)
+ISR(TIMER1_COMPB_vect, ISR_NAKED) 
 {
-  asm volatile(
-      "cli \n"
-      "sbi 0x0b, 5 \n"
-      "push r16 \n"
-      "push r17 \n"
-      "in  r17, (__SREG__) \n"
-      "ldi   r16, 0x00 \n"
-      "sts  (Bon), r16 \n"
-      "ldi r16,32 \n"
-      "LP2: \n"
-      "dec r16 \n"
-      "brne LP2\n"
-      "out (__SREG__), r17  \n"
-      "pop r17 \n"
-      "pop r16 \n"
-      "cbi 0x0b, 5 \n"
-      "reti" ::: "r16", "r17");
+  asm volatile  (
+    "cli \n" 
+    "sbi 0x0b, 5 \n" 
+    "push r16 \n" 
+    "push r17 \n" 
+    "in  r17, (__SREG__) \n" 
+    "ldi   r16, 0x00 \n" 
+    "sts  (Bon), r16 \n" 
+    "ldi r16,32 \n" 
+    "LP2: \n" 
+    "dec r16 \n" 
+    "brne LP2\n" 
+    "out (__SREG__), r17  \n" 
+    "pop r17 \n" "pop r16 \n" 
+    "cbi 0x0b, 5 \n" 
+    "reti" :::"r16","r17"
+  );
 }
 
-ISR(TIMER1_OVF_vect, ISR_NAKED)
+ISR(TIMER1_OVF_vect, ISR_NAKED) 
 {
-  asm volatile(
-      "cli \n"
-      "push r16 \n"
-      "ldi  r16, 0x00 \n"
-      "sts  0x0081, r16 \n"
-      "ldi r16, 0x98 \n"
-      "sts (intervaltime), r16 \n"
-      "ldi r16, 0x3a \n"
-      "sts (intervaltime+1), r16 \n"
-      "ldi   r16, 0x01 \n"
-      "sts  (ovf), r16 \n"
-      "pop r16 \n"
-      "reti" ::: "r16");
+  asm volatile  (
+    "cli \n" 
+    "push r16 \n" 
+    "ldi  r16, 0x00 \n" 
+    "sts  0x0081, r16 \n" 
+    "ldi r16, 0x98 \n" 
+    "sts (intervaltime), r16 \n" 
+    "ldi r16, 0x3a \n" 
+    "sts (intervaltime+1), r16 \n" 
+    "ldi   r16, 0x01 \n" 
+    "sts  (ovf), r16 \n" 
+    "pop r16 \n" "reti" :::"r16"
+  );
 }
 
-ISR(PCINT1_vect, ISR_NAKED)
-{
-  asm volatile(
-      "cli \n"
-      "push r16 \n"
-      "ldi  r16, 0x00 \n"
-      "sts  0x0068, r16 \n"
-      "ldi   r16, 0x01 \n"
-      "sts  (Kon), r16 \n"
-      "pop r16 \n"
-      "reti" ::: "r16");
-}
-
-void defmap()
-{
+void defmap() {
   int i, m, offset;
   bool flag = false;
   mapselcd = EEPROM.read(MAPSELECT);
@@ -265,7 +239,8 @@ void defmap()
   }
 }
 
-void lcddisp(int mode, bool ed, int sel, bool mod) {
+void lcddisp(int mode, bool ed, int sel, bool mod)
+{
   char buf[12];
   char sbuf[48];
   static int mpos[] = {0, 4, 7, 10, 13, 16};
@@ -473,10 +448,6 @@ void setup()
   pinMode(OUTPIN, OUTPUT);
   digitalWrite(OUTPIN, LOW);
   pinMode(INPIN, INPUT_PULLUP);
-  pinMode(SW_ENT, INPUT_PULLUP);
-  pinMode(SW_UP, INPUT_PULLUP);
-  pinMode(SW_DOWN, INPUT_PULLUP);
-  pinMode(SW_CAN, INPUT_PULLUP);
   pinMode(ENPIN, INPUT_PULLUP);
   defmap();
   lcddisp(LCDINI, false, mapselcd, false);
@@ -494,8 +465,6 @@ void setup()
   rtmp = EIMSK;
   rtmp = (rtmp & 0xfe) | 0x01;
   EIMSK = rtmp;
-  PCICR = 0x02;
-  PCMSK1 = 0x1e;
 }
 
 void loop()
@@ -504,9 +473,6 @@ void loop()
   int16_t fdelay;
   static unsigned long nowtime = 0;
   static unsigned long prevtime = 0;
-  static unsigned long Kontime = 0;
-  static bool Kontimeflag = false;
-  static bool Konintervalflag = false;
   bool enable = false;
   enable = (digitalRead(ENPIN) == HIGH) ? true : false;
 
@@ -554,7 +520,7 @@ void loop()
         int32_t predicted_measurement_fp = ab_interval_fp + ab_velocity_fp;
         int32_t residual_fp = measurement_fp - predicted_measurement_fp;
 
-        // 【UPDATE】定数化されたシフト量による追従性チューニング
+        // 定数化されたシフト量による追従性チューニング
         ab_interval_fp = predicted_measurement_fp + (residual_fp >> ALPHA_SHIFT);
         ab_velocity_fp = ab_velocity_fp + (residual_fp >> BETA_SHIFT);
       }
@@ -675,44 +641,8 @@ void loop()
   {
     ovf = false;
   }
-  if (Kon)
-  {
-    Kontime = millis();
-    Kontimeflag = true;
-    Kon = false;
-  }
-  if (Kontimeflag && KONDLY < (millis() - Kontime))
-  {
-    Konintervalflag = true;
-    if (digitalRead(SW_ENT) == LOW)
-    {
-      keyenter();
-    }
-    else if (digitalRead(SW_UP) == LOW)
-    {
-      keyup();
-    }
-    else if (digitalRead(SW_DOWN) == LOW)
-    {
-      keydown();
-    }
-    else if (digitalRead(SW_CAN) == LOW)
-    {
-      keycancel();
-    }
-    Kontimeflag = false;
-    if (edit)
-      lcddisp(LCDMOD, edit, select, modify);
-    else
-      lcddisp(LCDINI, edit, select, modify);
-  }
 
-  if (Konintervalflag && KINTDLY < (millis() - Kontime))
-  {
-    Konintervalflag = false;
-    PCICR = 0x02;
-  }
-
+  // シリアルコマンド受信・マップ編集
   bool skf = false;
   if (Serial.available())
   {
@@ -745,10 +675,11 @@ void loop()
   }
 
   nowtime = millis();
-  if (500 < (nowtime - prevtime))
+  // LCD(シリアル)の回転数更新
+  if (RPMINTVL < (nowtime - prevtime))
   {
     lcddisp(LCDRPM, edit, select, modify);
-    prevtime = millis();
+    prevtime = nowtime;
   }
 
   if ((bitRead(EIMSK, 0) == 0) && (TIMINTVL < TCNT1))
