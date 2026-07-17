@@ -1,3 +1,15 @@
+// Copyright 2024 ほいほい堂本舗 http://www.hoihoido.com
+//
+// 20260616 Ver7.1 ダブルファイア修正ロールバック版 (Gemini)
+//                 [BUG FIX] Ver7.0で導入した「タコメーター重複発火防止ロジック」が、
+//                           エンジンのステートマシン（割り込みの連続性）を破壊し、
+//                           全回転域で深刻なボコつき・うなりを引き起こすデグレードが発覚したため、
+//                           当該のタイマーキル処理(is_rescuedロジック)を完全にロールバック。
+//                           ※ フィルタ係数の定数化、およびコントローラの廃止・リファクタリングは維持。
+// 20260615 Ver7.0 コントローラ廃止・コードリファクタリング (Gemini)
+// 20260615 Ver7.0 α-βフィルタ係数の定数化・チューニング対応版 (Gemini)
+// 20260614 Ver6.9 9000rpm対応 5ポイント進角マップ拡張版 (Gemini)
+
 #include <EEPROM.h>
 
 #define OUTPIN 5 // PD5
@@ -21,31 +33,31 @@
 #define LCDRPM 0
 #define LCDINI 1
 #define LCDMOD 2
-#define VERSION 70  // バージョン番号 (70=Ver7.0 フィルタ定数化・リファクタリング)
+#define VERSION 71  // バージョン番号 (71=Ver7.1 ロールバック版)
 
 volatile bool pon = false;
 volatile bool ovf = false; 
-volatile bool Bon=false;   
-volatile bool Aen=false;   
-volatile bool Ben=false;   
-volatile unsigned widthA=0;
-volatile unsigned widthB=0;
-volatile unsigned int intervaltime=0;
+volatile bool Bon = false;   
+volatile bool Aen = false;   
+volatile bool Ben = false;   
+volatile unsigned widthA = 0;
+volatile unsigned widthB = 0;
+volatile unsigned int intervaltime = 0;
 
 // デフォルト配列 (5要素)
-uint8_t tmap[]={ 0, 0, 0, 0, 0}; 
-uint8_t dmapA[]={17,22,30,32,32}; 
-uint8_t dmapB[]={17,27,27,27,27}; 
+uint8_t tmap[] = { 0, 0, 0, 0, 0}; 
+uint8_t dmapA[] = {17, 22, 30, 32, 32}; 
+uint8_t dmapB[] = {17, 27, 27, 27, 27}; 
 
-uint16_t rpm=0;
-unsigned int averagetime=0;
-int mapselect=0;  
-int mapselcd=0;   
-bool edit=false;
-int  select=0;
-bool modify=false;
-uint8_t *mappt=dmapA;
-int offset=MAPAOFFSET;
+uint16_t rpm = 0;
+unsigned int averagetime = 0;
+int mapselect = 0;  
+int mapselcd = 0;   
+bool edit = false;
+int  select = 0;
+bool modify = false;
+uint8_t *mappt = dmapA;
+int offset = MAPAOFFSET;
 
 // 高解像度 α-βフィルタ用の状態変数
 int32_t ab_interval_fp = 15000 << 8;
@@ -348,6 +360,7 @@ void keyenter()
     }
   }
 }
+
 void keycancel()
 {
   if (edit)
@@ -379,6 +392,7 @@ void keycancel()
     }
   }
 }
+
 void keyup()
 {
   if (edit)
@@ -408,6 +422,7 @@ void keyup()
       mapselcd = 0;
   }
 }
+
 void keydown()
 {
   if (edit)
@@ -482,7 +497,6 @@ void loop()
     {
       int32_t measurement = (int32_t)intervaltime;
       int32_t current_ab_interval = ab_interval_fp >> 8;
-      bool is_rescued = false; // ダブルファイア防止フラグ
 
       // 1. ノイズ足切り（デッドタイム）
       if (measurement < (current_ab_interval >> 2))
@@ -497,12 +511,12 @@ void loop()
       history[1] = measurement;
 
       // レスキュー点火（加速による異常スキップ防止）
+      // 【ROLLBACK】is_rescuedフラグ処理を完全削除
       if (measurement < (current_ab_interval - (current_ab_interval >> 3)))
       {
         bitSet(PORTD, 5);
         delayMicroseconds(30);
         bitClear(PORTD, 5);
-        is_rescued = true; // レスキュー点火済みをマーク
       }
 
       // 3. 高解像度 α-β フィルタ (256倍精度・固定小数点)
@@ -576,15 +590,8 @@ void loop()
       fdelay = (int16_t)(((long)sdeg_fp * (long)averagetime * 182L) >> 20);
 
       // 6. モード切り替え同期・セーフティ制御
-      if (is_rescued)
-      {
-        // レスキュー発火済みの場合は、タイマーによる二重発火を完全にキルし、タコメーター倍表示を防ぐ
-        widthA = 0;
-        Aen = false;
-        Ben = false;
-        widthB = 0;
-      }
-      else if (fdelay == -1 || fdelay == 0)
+      // 【ROLLBACK】is_rescuedによるキル処理を完全削除
+      if (fdelay == -1 || fdelay == 0)
       {
         widthA = 1;
         Aen = true;
